@@ -431,6 +431,58 @@ return await generateImage({
   request,
 });`,
         },
+        {
+            label: i18n.t("modelPlugin.templates.aliyun"),
+            script: `/**
+ * Aliyun Qwen-Image, OpenAI compatible mode.
+ * Text-to-image and image editing share POST /images/generations: adding a top-level \`image\` field turns the call into editing.
+ * \`image\` takes public URLs or data URLs, a string for one reference and an array for several (qwen-image-2.1 series: 1-10, qwen-image-3.0 series: 1-3).
+ * \`size\` uses "WxH" between 512x512 and 2048x2048; the response only contains \`url\` items because response_format is ignored.
+ * @param {string} prompt
+ * @param {string[]} images - reference images as data URLs; empty for text-to-image
+ * @param {object} params
+ * @param {string} params.size - output size such as "1024x1024"; "auto" lets the model decide
+ * @param {number} params.count - image count, 1-6
+ * @param {string} model
+ * @param {function} http - http.post(path, body) joins baseUrl and adds the Bearer token
+ * @returns {Promise<string[]>} image URLs or data URLs
+ */
+async function generateImage({
+  prompt,
+  images,
+  params: {
+    size,
+    count,
+  },
+  model,
+  http,
+}) {
+  const body = {
+    model: model,
+    prompt: prompt,
+    n: Number(count) || 1,
+    watermark: false,
+  };
+  if (size && size !== "auto") body.size = size;
+  if (images.length === 1) body.image = images[0];
+  else if (images.length > 1) body.image = images;
+
+  const data = await http.post("/images/generations", body);
+  const urls = [];
+  for (const item of data.data || []) {
+    urls.push(item.b64_json ? \`data:image/png;base64,\${item.b64_json}\` : item.url);
+  }
+  return urls.filter(Boolean);
+}
+
+return await generateImage({
+  prompt,
+  images,
+  params,
+  model,
+  http,
+});`,
+        },
     ],
     video: [
         {
@@ -698,6 +750,147 @@ async function generateVideo({
       return { url: uri + separator + "key=" + apiKey };
     },
     { intervalMs: 5000, timeoutMs: 300000 },
+  );
+}
+
+return await generateVideo({
+  prompt,
+  images,
+  videos,
+  audios,
+  params,
+  model,
+  baseUrl,
+  apiKey,
+  request,
+  poll,
+});`,
+        },
+        {
+            label: i18n.t("modelPlugin.templates.minimax"),
+            script: `/**
+ * MiniMax native video: POST {baseUrl}/video_generation, then poll GET {baseUrl}/query/video_generation/{task_id}.
+ * The native API expects public media URLs. Images are sent as data URLs; local videos and audio are converted to data URLs.
+ * @param {string} prompt
+ * @param {string[]} images - reference images as data URLs
+ * @param {File[]} videos - reference videos; empty when none
+ * @param {File[]} audios - reference audio; empty when none
+ * @param {object} params
+ * @param {string} params.mode - "frames" uses first_frame / last_frame; "reference" sends all images as reference_image
+ * @param {string|number} params.seconds - duration; H3 is clamped to 4-15 seconds
+ * @param {string|null} params.size - pixel size; null when auto, which sends ratio adaptive
+ * @param {string} params.ratio - aspect ratio, e.g. "16:9"
+ * @param {string} params.resolution - e.g. "720p"; H3 maps to 768P or 2K
+ * @param {string} model
+ * @param {string} baseUrl - native API root, e.g. https://metaso.cn/api/minimax/v2
+ * @param {string} apiKey
+ * @param {function} request
+ * @param {function} poll
+ * @returns {Promise<{url: string}>}
+ */
+async function generateVideo({
+  prompt,
+  images,
+  videos,
+  audios,
+  params: {
+    mode,
+    seconds,
+    size,
+    ratio,
+    resolution,
+  },
+  model,
+  baseUrl,
+  apiKey,
+  request,
+  poll,
+}) {
+  const base = String(baseUrl || "").trim().replace(/\\/+$/, "").replace(/\\/video_generation$/i, "");
+  if (/\\/api\\/openai$/i.test(base)) {
+    throw new Error("请把渠道 Base URL 改为原生接口根地址（例如 https://metaso.cn/api/minimax/v2）后再使用 MiniMax 原生脚本");
+  }
+
+  function toDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+      reader.onload = function () {
+        resolve(String(reader.result || ""));
+      };
+      reader.onerror = function () {
+        reject(reader.error || new Error("Failed to read media file"));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const isH3 = /h3/i.test(model);
+  const resolutionText = String(resolution || "720p").toLowerCase();
+  const resolutionNumber = Number(resolutionText.replace(/[^0-9.]/g, "")) || 720;
+  let nativeResolution = resolutionNumber + "P";
+  if (isH3) nativeResolution = resolutionNumber >= 1080 || resolutionText.includes("2k") ? "2K" : "768P";
+  else if (resolutionText.includes("2k")) nativeResolution = "2K";
+  else if (resolutionText.includes("4k")) nativeResolution = "4K";
+
+  const content = [];
+  if (prompt) content.push({ type: "text", text: prompt });
+  if (mode === "frames") {
+    if (images[0]) content.push({ type: "image_url", image_url: { url: images[0] }, role: "first_frame" });
+    if (images[1]) content.push({ type: "image_url", image_url: { url: images[1] }, role: "last_frame" });
+  } else {
+    for (const url of images) {
+      content.push({ type: "image_url", image_url: { url: url }, role: "reference_image" });
+    }
+  }
+  for (const file of videos) {
+    content.push({ type: "video_url", video_url: { url: await toDataUrl(file) }, role: "reference_video" });
+  }
+  for (const file of audios) {
+    content.push({ type: "audio_url", audio_url: { url: await toDataUrl(file) }, role: "reference_audio" });
+  }
+
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: \`Bearer \${apiKey}\`,
+  };
+  const created = await request({
+    method: "post",
+    url: base + "/video_generation",
+    headers: headers,
+    data: {
+      model: model,
+      content: content,
+      resolution: nativeResolution,
+      duration: Math.max(4, Math.min(isH3 ? 15 : 30, Number(seconds) || 6)),
+      ratio: size && size !== "auto" ? ratio || "16:9" : "adaptive",
+    },
+  });
+  const taskId = created && (created.task_id || created.taskId || created.id || (created.task && created.task.id) || (created.data && created.data.task_id));
+  if (!taskId) throw new Error("MiniMax did not return a task id");
+
+  return await poll(
+    async function () {
+      const payload = await request({
+        method: "get",
+        url: base + "/query/video_generation/" + encodeURIComponent(taskId),
+        headers: headers,
+      });
+      const task = (payload && (payload.task || (payload.data && payload.data.task))) || payload || {};
+      const status = String(task.status || (payload && payload.status) || "").toLowerCase();
+      const url = (task.content && (task.content.url || task.content.video_url)) || task.video_url || task.url || (payload && payload.content && payload.content.url);
+      if (url) return { url: url };
+      if (status === "failed" || status === "cancelled") {
+        throw new Error((task.error && task.error.message) || task.message || (payload && payload.message) || "MiniMax video generation failed");
+      }
+      if (status === "succeeded" || status === "success" || status === "completed") {
+        throw new Error("MiniMax task completed without a video URL");
+      }
+      return null;
+    },
+    function (result) {
+      return result;
+    },
+    { intervalMs: 2500, timeoutMs: 300000 },
   );
 }
 
