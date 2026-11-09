@@ -56,7 +56,8 @@ description: 当前画布节点的主要用途与操作流程
 - OpenAI 风格接口使用 `POST /v1/videos`、`GET /v1/videos/{id}` 和 `GET /v1/videos/{id}/content`，按模式发送 `first_frame` / `last_frame` 或 `image[]`，并可附带 `video[]` / `audio[]`。Gemini 格式渠道使用 `models/{model}:predictLongRunning` 并轮询 operation，按模式发送 `image` / `lastFrame` 或 `referenceImages`。
 - 渠道的 Base URL 只填到 `/v1` 之前；例如秘塔 MiniMax-H3 的 OpenAI 兼容地址填 `https://metaso.cn/api/openai`，应用会自动拼接 `/v1/videos`。不要把 `/video_generation` 这类完整原生接口路径填进 Base URL，否则会拼出错误地址并返回 404。
 - 秘塔 OpenAI 兼容接口目前只支持 `1280x720`（16:9 768P）、`720x1280`（9:16 768P）、`1792x1024`（16:9 2K）、`1024x1792`（9:16 2K）四种尺寸；在应用里选择 720p + 16:9 或 9:16 会得到前两种尺寸。其他比例和 480p/1080p 会返回 `Unsupported value for 'size'`。该接口目前只支持单图 + 提示词，暂不支持多图、参考视频和参考音频。
-- 需要多图、参考视频或参考音频时，可以在视频模型的「调用脚本」里插入「MiniMax 原生」模板：把渠道 Base URL 设为原生接口根地址（秘塔为 `https://metaso.cn/api/minimax/v2`），脚本会请求 `POST {baseUrl}/video_generation` 并轮询 `GET {baseUrl}/query/video_generation/{task_id}`，按模式提交 `first_frame` / `last_frame` / `reference_image` / `reference_video` / `reference_audio`。MiniMax-H3 会把 720p 映射为 `768P`、1080p 映射为 `2K`，时长限制在 4–15 秒；参考素材会以 data URL 提交，若渠道只接受公网 URL，需要先把素材上传到公网。
+- 需要多图、参考视频或参考音频时，可以在视频模型的「调用脚本」里插入「MiniMax 原生」模板：把渠道 Base URL 设为原生接口根地址（秘塔为 `https://metaso.cn/api/minimax/v2`），脚本会请求 `POST {baseUrl}/video_generation` 并轮询 `GET {baseUrl}/query/video_generation/{task_id}`，按模式提交 `first_frame` / `last_frame` / `reference_image` / `reference_video` / `reference_audio`。MiniMax-H3 会把 720p 映射为 `768P`、1080p 映射为 `2K`，时长限制在 4–30 秒；参考素材会以 data URL 提交，若渠道只接受公网 URL，需要先把素材上传到公网。
+- 秘塔 OpenAI 兼容接口返回的视频目前没有音轨；需要音画同步时请使用「MiniMax 原生」脚本和原生 Base URL。
 - 创建远端任务后会把任务 ID 写入视频节点；刷新页面后会自动继续查询任务状态，也可点击「获取任务状态」手动拉取，直到生成成功、任务失败或查询请求报错。
 
 ## 组节点

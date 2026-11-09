@@ -111,14 +111,14 @@ test("uses first_frame and last_frame in frames mode", async () => {
     ]);
 });
 
-test("maps 1080p to 2K and auto size to adaptive", async () => {
+test("maps 1080p to 2K, auto size to adaptive, and keeps 30 seconds", async () => {
     const { calls, request, poll } = createMocks();
     await runTemplate(minimaxTemplate!.script, {
         prompt: "auto",
         images: [],
         videos: [],
         audios: [],
-        params: { mode: "frames", seconds: 8, size: null, ratio: "16:9", resolution: "1080p" },
+        params: { mode: "frames", seconds: 30, size: null, ratio: "16:9", resolution: "1080p" },
         model: "MiniMax-H3",
         baseUrl: "https://metaso.cn/api/minimax/v2",
         apiKey: "test-key",
@@ -126,7 +126,7 @@ test("maps 1080p to 2K and auto size to adaptive", async () => {
         poll,
     });
     const post = calls.find((call) => call.method === "post");
-    expect(post?.data).toMatchObject({ resolution: "2K", duration: 8, ratio: "adaptive" });
+    expect(post?.data).toMatchObject({ resolution: "2K", duration: 30, ratio: "adaptive" });
 });
 
 test("rejects the OpenAI-compatible Base URL", async () => {

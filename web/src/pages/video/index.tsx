@@ -76,6 +76,7 @@ export default function VideoPage() {
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
+    const videoConfig = { ...effectiveConfig, size: effectiveConfig.videoSize || effectiveConfig.size };
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
@@ -102,7 +103,7 @@ export default function VideoPage() {
     const processedCommandRef = useRef(0);
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
-    const model = effectiveConfig.videoModel || effectiveConfig.model;
+    const model = videoConfig.videoModel || videoConfig.model;
     const canGenerate = Boolean(prompt.trim());
 
     useEffect(() => {
@@ -226,12 +227,12 @@ export default function VideoPage() {
             message.error(t("videoWorkbench.promptRequired"));
             return null;
         }
-        if (!isAiConfigReady(effectiveConfig, model)) {
+        if (!isAiConfigReady(videoConfig, model)) {
             message.warning(t("workbench.configFirst"));
             openConfigDialog(true);
             return null;
         }
-        return { text, config: buildVideoConfig(effectiveConfig, model), references: [...references] };
+        return { text, config: buildVideoConfig(videoConfig, model), references: [...references] };
     };
 
     const retryResult = () => {
@@ -313,7 +314,7 @@ export default function VideoPage() {
         setRunning(true);
         setStartedAt((value) => value || performance.now());
         setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
-        const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
+        const taskConfig = buildVideoConfig({ ...videoConfig, ...log.config }, log.task.model || log.model);
         try {
             for (let attempt = 0; attempt < 120; attempt += 1) {
                 const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
@@ -360,7 +361,7 @@ export default function VideoPage() {
         setPrompt(log.prompt);
         setReferences(log.references || []);
         if (log.config.videoModel || log.model) updateConfig("videoModel", log.config.videoModel || log.model);
-        if (log.config.size) updateConfig("size", log.config.size);
+        if (log.config.size) updateConfig("videoSize", log.config.size);
         if (log.config.vquality) updateConfig("vquality", log.config.vquality);
         if (log.config.videoSeconds) updateConfig("videoSeconds", log.config.videoSeconds);
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
@@ -444,7 +445,7 @@ export default function VideoPage() {
 
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s · {videoModeLabel(effectiveConfig.videoMode)}
+                                    {modelOptionLabel(videoConfig, model)} · {normalizeResolution(videoConfig.vquality)}p · {videoSizeLabel(videoConfig.size)} · {normalizeVideoSeconds(videoConfig.videoSeconds)}s · {videoModeLabel(videoConfig.videoMode)}
                                 </span>
                                 <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
                                     {t("workbench.adjust")}
@@ -452,7 +453,7 @@ export default function VideoPage() {
                             </div>
 
                             <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                <GenerationSettings config={videoConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                             </div>
                         </div>
 
@@ -497,7 +498,7 @@ export default function VideoPage() {
             </Drawer>
             <Drawer title={t("workbench.settings")} placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                    <GenerationSettings config={videoConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
@@ -520,7 +521,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
             <div className="col-span-2">
-                <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+                <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key === "size" ? "videoSize" : key, value)} theme={theme} showTitle={false} className="space-y-4" />
             </div>
         </>
     );
@@ -775,7 +776,7 @@ function buildVideoConfig(config: AiConfig, model: string): AiConfig {
         ...config,
         model,
         videoModel: model,
-        size: normalizeVideoSize(config.size),
+        size: normalizeVideoSize(config.size, config.vquality),
         videoSeconds: normalizeVideoSeconds(config.videoSeconds),
         vquality: normalizeResolution(config.vquality),
         videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
@@ -789,8 +790,8 @@ function normalizeVideoSeconds(value: string) {
     return clampVideoSeconds(value);
 }
 
-function normalizeVideoSize(value: string) {
-    return normalizeVideoSizeValue(value);
+function normalizeVideoSize(value: string, resolution?: string) {
+    return normalizeVideoSizeValue(value, resolution);
 }
 
 function normalizeResolution(value: string) {

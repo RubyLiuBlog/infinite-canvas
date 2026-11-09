@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ModelPicker } from "@/components/model-picker";
-import { videoResolutionOptions } from "@/components/video-settings-panel";
+import { normalizeVideoModeValue, videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/components/video-settings-panel";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
@@ -15,7 +15,7 @@ import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaScaleOptions, parseVideoResolution } from "@/lib/media-size";
+import { clampVideoSeconds, computeMediaSize, computeVideoSize, inferMediaRatio, inferMediaScale, inferVideoRatio, mediaScaleOptions, parseVideoResolution } from "@/lib/media-size";
 import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
@@ -70,6 +70,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
     const locale = i18n.resolvedLanguage as AppLocale;
     const imageResolutionOptions = mediaScaleOptions.map((value) => ({ value, label: value === "auto" ? t("settingsPanels.common.auto") : value.toUpperCase() }));
+    const videoModeOptions = [
+        { value: "frames", label: t("settingsPanels.video.modes.frames") },
+        { value: "reference", label: t("settingsPanels.video.modes.reference") },
+    ];
     useEffect(() => setActiveTab(initialTab), [initialTab]);
 
     const saveConfig = (nextConfig: AiConfig) => {
@@ -249,7 +253,31 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         <Select value={inferMediaScale(config.size)} options={imageResolutionOptions} onChange={(scale) => updateConfig("size", computeMediaSize(scale, inferMediaRatio(config.size)))} />
                                     </Form.Item>
                                     <Form.Item label={t("config.preferences.videoResolution")} className="mb-4">
-                                        <Select value={parseVideoResolution(config.vquality)} options={videoResolutionOptions} onChange={(value) => updateConfig("vquality", value)} />
+                                        <Select
+                                            value={parseVideoResolution(config.vquality)}
+                                            options={videoResolutionOptions}
+                                            onChange={(value) => {
+                                                updateConfig("vquality", value);
+                                                const ratio = inferVideoRatio(config.videoSize);
+                                                if (ratio !== "auto") updateConfig("videoSize", computeVideoSize(value, ratio));
+                                            }}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label={t("config.preferences.videoSize")} className="mb-4">
+                                        <Select value={inferVideoRatio(config.videoSize || config.size)} options={videoSizeOptions} onChange={(ratio) => updateConfig("videoSize", computeVideoSize(parseVideoResolution(config.vquality), ratio))} />
+                                    </Form.Item>
+                                    <Form.Item label={t("config.preferences.videoSeconds")} className="mb-4">
+                                        <Input
+                                            type="number"
+                                            min={videoSecondsRange.min}
+                                            max={videoSecondsRange.max}
+                                            value={config.videoSeconds}
+                                            onChange={(event) => updateConfig("videoSeconds", event.target.value)}
+                                            onBlur={(event) => updateConfig("videoSeconds", clampVideoSeconds(event.target.value))}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label={t("config.preferences.videoMode")} className="mb-4">
+                                        <Select value={normalizeVideoModeValue(config.videoMode)} options={videoModeOptions} onChange={(value) => updateConfig("videoMode", value)} />
                                     </Form.Item>
                                     <Form.Item label={t("config.preferences.audioVoice")} className="mb-4">
                                         <Select value={config.audioVoice} options={audioVoiceOptions} onChange={(value) => updateConfig("audioVoice", value)} />

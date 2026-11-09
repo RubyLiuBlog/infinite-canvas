@@ -777,7 +777,7 @@ return await generateVideo({
  * @param {File[]} audios - reference audio; empty when none
  * @param {object} params
  * @param {string} params.mode - "frames" uses first_frame / last_frame; "reference" sends all images as reference_image
- * @param {string|number} params.seconds - duration; H3 is clamped to 4-15 seconds
+ * @param {string|number} params.seconds - duration, clamped to 4-30 seconds
  * @param {string|null} params.size - pixel size; null when auto, which sends ratio adaptive
  * @param {string} params.ratio - aspect ratio, e.g. "16:9"
  * @param {string} params.resolution - e.g. "720p"; H3 maps to 768P or 2K
@@ -861,7 +861,7 @@ async function generateVideo({
       model: model,
       content: content,
       resolution: nativeResolution,
-      duration: Math.max(4, Math.min(isH3 ? 15 : 30, Number(seconds) || 6)),
+      duration: Math.max(4, Math.min(30, Number(seconds) || 6)),
       ratio: size && size !== "auto" ? ratio || "16:9" : "adaptive",
     },
   });
