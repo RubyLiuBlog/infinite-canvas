@@ -1843,6 +1843,8 @@ function InfiniteCanvasPage() {
         [message, t],
     );
 
+    const handleNodeCaptureVideoFrame = useCallback((node: CanvasNodeData) => void captureVideoNodeFrame(node.id, "current"), [captureVideoNodeFrame]);
+
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
             if (node.type === CanvasNodeType.Text) {
@@ -3264,6 +3266,7 @@ function InfiniteCanvasPage() {
                             onDeleteBatchImage={deleteBatchImage}
                             onRetry={handleNodeRetry}
                             onViewImage={handleNodeViewImage}
+                            onCaptureVideoFrame={handleNodeCaptureVideoFrame}
                             onSelectReference={selectNodeReference}
                             onContextMenu={handleNodeContextMenu}
                         />

@@ -2,7 +2,7 @@ import axios from "axios";
 
 import i18n from "@/i18n";
 import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
-import { isGenericHttpMessage, readAxiosError, readStatusError } from "./api-error";
+import { isGenericHttpMessage, readApiErrorMessage, readAxiosError, readStatusError } from "./api-error";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -78,6 +78,17 @@ type ImageApiResponse = {
     code?: number;
     msg?: string;
 };
+type ApimartTaskPayload = {
+    status?: string;
+    error?: { message?: string };
+    result?: { images?: Array<{ url?: string | string[] }> };
+};
+type ApimartResponse<T> = {
+    code?: number;
+    data?: T;
+    msg?: string;
+    error?: { message?: string };
+};
 type GeminiPart = {
     text?: string;
     inlineData?: { mimeType?: string; data?: string };
@@ -108,6 +119,9 @@ const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
 // 与 image-storage 的下载超时保持一致，避免接口挂起时节点一直停在生成中。
 const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
+const APIMART_POLL_INTERVAL_MS = 3000;
+const APIMART_POLL_TIMEOUT_MS = 30_000;
+const APIMART_MAX_IMAGES = 4;
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 
@@ -635,6 +649,84 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
+function sleep(ms: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+        }
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener(
+            "abort",
+            () => {
+                clearTimeout(timer);
+                reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+        );
+    });
+}
+
+function apimartImageUrls(payload: ApimartResponse<ApimartTaskPayload>) {
+    return (payload.data?.result?.images || [])
+        .flatMap((item) => (Array.isArray(item.url) ? item.url : item.url ? [item.url] : []))
+        .filter((url): url is string => Boolean(url));
+}
+
+/**
+ * APIMart image models are asynchronous: text-to-image and reference-image editing
+ * both submit to /images/generations (references in image_urls), then poll /tasks/{id}.
+ */
+async function requestApimartImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+    const quality = normalizeQuality(config.quality);
+    const requestSize = resolveRequestSize(config.size);
+    const background = normalizeBackground(config.background);
+    const referenceUrls = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const submitted = await axios.post<ApimartResponse<Array<{ task_id?: string }>>>(
+        aiApiUrl(config, "/images/generations"),
+        {
+            model: config.model,
+            prompt,
+            n: Math.min(APIMART_MAX_IMAGES, count),
+            ...(requestSize ? { size: requestSize } : {}),
+            ...(quality ? { quality } : {}),
+            ...(background ? { background } : {}),
+            ...(referenceUrls.length ? { image_urls: referenceUrls } : {}),
+        },
+        {
+            headers: aiHeaders(config, "application/json"),
+            signal: options?.signal,
+            timeout: IMAGE_REQUEST_TIMEOUT_MS,
+        },
+    );
+    if (typeof submitted.data?.code === "number" && submitted.data.code !== 200) {
+        throw new Error(readApiErrorMessage(submitted.data) || apiText("imageGenerationFailed"));
+    }
+    const taskId = submitted.data?.data?.[0]?.task_id;
+    if (!taskId) throw new Error(readApiErrorMessage(submitted.data) || apiText("noImageTaskId"));
+
+    const deadline = Date.now() + IMAGE_REQUEST_TIMEOUT_MS;
+    for (;;) {
+        await sleep(APIMART_POLL_INTERVAL_MS, options?.signal);
+        const task = await axios.get<ApimartResponse<ApimartTaskPayload>>(aiApiUrl(config, `/tasks/${encodeURIComponent(taskId)}`), {
+            headers: aiHeaders(config),
+            signal: options?.signal,
+            timeout: APIMART_POLL_TIMEOUT_MS,
+        });
+        if (typeof task.data?.code === "number" && task.data.code !== 200) {
+            throw new Error(readApiErrorMessage(task.data) || apiText("imageGenerationFailed"));
+        }
+        const status = task.data?.data?.status;
+        if (status === "completed") {
+            const urls = apimartImageUrls(task.data);
+            if (!urls.length) throw new Error(apiText("noImageReturned"));
+            return urls.map((url) => ({ id: nanoid(), dataUrl: url }));
+        }
+        if (status === "failed") throw new Error(readApiErrorMessage(task.data?.data?.error) || readApiErrorMessage(task.data) || apiText("imageGenerationFailed"));
+        if (Date.now() >= deadline) throw new Error(apiText("imageTimeout"));
+    }
+}
+
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
@@ -654,6 +746,13 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+        } catch (error) {
+            throw new Error(readAxiosError(error, apiText("requestFailed"), { timeout: true }));
+        }
+    }
+    if (requestConfig.apiFormat === "apimart") {
+        try {
+            return await requestApimartImages(requestConfig, withSystemPrompt(requestConfig, prompt), [], n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed"), { timeout: true }));
         }
@@ -716,6 +815,13 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+        } catch (error) {
+            throw new Error(readAxiosError(error, apiText("requestFailed"), { timeout: true }));
+        }
+    }
+    if (requestConfig.apiFormat === "apimart") {
+        try {
+            return await requestApimartImages(requestConfig, withSystemPrompt(requestConfig, requestPrompt), references, n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed"), { timeout: true }));
         }

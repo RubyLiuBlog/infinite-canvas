@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { formatBytes } from "@/lib/image-utils";
 import { pickImageSource } from "@/lib/image-thumbnail";
 import { previewUrlFor, subscribeImagePreviews, getImagePreviewRevision } from "@/services/image-storage";
@@ -10,6 +11,7 @@ import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { CanvasVideoPlayer } from "./canvas-video-player";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeImage, type CanvasNodeText, type Position } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -55,6 +57,7 @@ type CanvasNodeProps = {
     onDeleteBatchImage?: (nodeId: string, imageId: string) => void;
     onRetry?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData, imageId?: string) => void;
+    onCaptureVideoFrame?: (node: CanvasNodeData) => void;
     onSelectReference?: (nodeId: string) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
@@ -81,6 +84,7 @@ type NodeContentRendererProps = {
     onRetryBatchImage?: (imageId: string) => void;
     onDeleteBatchImage?: (imageId: string) => void;
     onViewBatchImage?: (imageId: string) => void;
+    onCaptureVideoFrame?: (node: CanvasNodeData) => void;
     groupChildCount: number;
 };
 
@@ -120,6 +124,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onDeleteBatchImage,
     onRetry,
     onViewImage,
+    onCaptureVideoFrame,
     onSelectReference,
     onContextMenu,
 }: CanvasNodeProps) {
@@ -423,6 +428,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onRetryBatchImage={(imageId) => onRetryBatchImage?.(data, imageId)}
                         onDeleteBatchImage={(imageId) => onDeleteBatchImage?.(data.id, imageId)}
                         onViewBatchImage={(imageId) => onViewImage?.(data, imageId)}
+                        onCaptureVideoFrame={onCaptureVideoFrame}
                         groupChildCount={groupChildCount}
                     />
                 </div>
@@ -704,7 +710,7 @@ function EmptyImageContent({ theme }: NodeContentRendererProps) {
     );
 }
 
-function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
+function VideoNodeContent({ node, theme, onCaptureVideoFrame }: NodeContentRendererProps) {
     const { t } = useTranslation();
     if (!node.metadata?.content)
         return (
@@ -713,7 +719,9 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">{t("canvas.node.emptyVideo")}</span>
             </div>
         );
-    return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-video={node.id} data-canvas-no-zoom />;
+    const defaultSize = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
+    const controlScale = Math.min(node.width / defaultSize.width, node.height / defaultSize.height);
+    return <CanvasVideoPlayer nodeId={node.id} src={node.metadata.content} scale={controlScale} onCapture={() => onCaptureVideoFrame?.(node)} />;
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {

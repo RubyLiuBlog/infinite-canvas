@@ -17,10 +17,34 @@ npx @basketikun/canvas-proxy@latest
 可选参数：
 
 ```bash
-npx @basketikun/canvas-proxy@latest --port 23210 --host 127.0.0.1
+npx @basketikun/canvas-proxy@latest --port 23210 --host 127.0.0.1 --proxy http://127.0.0.1:7890
 ```
 
 也支持 `PORT` / `HOST` 环境变量。
+
+## 走本机代理（可选）
+
+Node 自带的 `fetch` 不会读取终端的代理配置，所以要由 canvas-proxy 自己接上上游代理。在同一个终端里带着 `all_proxy` 启动即可：
+
+```bash
+export all_proxy=http://127.0.0.1:7890
+npx @basketikun/canvas-proxy@latest
+```
+
+也可以直接传参：
+
+```bash
+npx @basketikun/canvas-proxy@latest --proxy http://127.0.0.1:7890
+```
+
+读取的变量：`ALL_PROXY` / `all_proxy`、`HTTPS_PROXY` / `https_proxy`、`HTTP_PROXY` / `http_proxy`，按这个顺序取第一个有值的。`--proxy` 优先级最高，会同时用于 HTTP 和 HTTPS 目标。
+
+只支持 HTTP / HTTPS 代理，`socks5://` 之类的地址会直接报错退出。上游代理对转发的所有目标生效，没有按目标地址绕过的配置。启动时终端会打印实际使用的上游代理，例如：
+
+```
+@basketikun/canvas-proxy v0.2.0 listening on http://127.0.0.1:23210
+Upstream requests go through http://127.0.0.1:7890
+```
 
 ## 转发规则
 
@@ -53,4 +77,4 @@ http://127.0.0.1:23210/https://api.openai.com/v1/models
 
 ## 环境要求
 
-Node.js >= 18。
+Node.js >= 18.17。

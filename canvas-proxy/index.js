@@ -2,6 +2,7 @@
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { Readable } from "node:stream";
+import { ProxyAgent } from "undici";
 
 const pkg = createRequire(import.meta.url)("./package.json");
 
@@ -21,6 +22,24 @@ const SKIP_RESPONSE_HEADERS = new Set(["content-encoding", "content-length", "tr
 function readArg(args, name, fallback) {
     const index = args.indexOf(`--${name}`);
     return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
+}
+
+function readEnv(...names) {
+    return names.map((name) => process.env[name]).find(Boolean);
+}
+
+/** Node's fetch ignores *_proxy variables on its own, so the upstream proxy is wired in as an undici dispatcher. */
+function resolveUpstreamProxy() {
+    const url = readArg(process.argv.slice(2), "proxy", undefined)
+        || readEnv("ALL_PROXY", "all_proxy")
+        || readEnv("HTTPS_PROXY", "https_proxy")
+        || readEnv("HTTP_PROXY", "http_proxy");
+    if (!url) return null;
+    try {
+        return { url, dispatcher: new ProxyAgent({ uri: url }) };
+    } catch (error) {
+        throw new Error(`invalid upstream proxy "${url}" (only http:// and https:// proxies are supported): ${error.message}`);
+    }
 }
 
 function readBody(req) {
@@ -75,7 +94,7 @@ function logForward(method, target, outcome, startedAt) {
 
 async function forward(req, res, target) {
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : await readBody(req);
-    const upstream = await fetch(target, { method: req.method, headers: requestHeaders(req), body, redirect: "follow" });
+    const upstream = await fetch(target, { method: req.method, headers: requestHeaders(req), body, redirect: "follow", dispatcher: upstreamProxy?.dispatcher });
     // Logged as soon as the status line arrives, so a long SSE stream still shows up immediately.
     res.writeHead(upstream.status, responseHeaders(upstream));
     if (!upstream.body) {
@@ -119,14 +138,16 @@ export function createProxyServer() {
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
-    console.log(`${pkg.name} v${pkg.version}\n\nUsage: npx ${pkg.name}@latest [--port 23210] [--host 127.0.0.1]\n\nForwards http://<host>:<port>/<full-target-url> to <full-target-url> with permissive CORS headers.`);
+    console.log(`${pkg.name} v${pkg.version}\n\nUsage: npx ${pkg.name}@latest [--port 23210] [--host 127.0.0.1] [--proxy http://127.0.0.1:7890]\n\nForwards http://<host>:<port>/<full-target-url> to <full-target-url> with permissive CORS headers. Upstream requests also honor --proxy or the ALL_PROXY / HTTPS_PROXY / HTTP_PROXY environment variables.`);
     process.exit(0);
 }
 
 const port = Number(readArg(args, "port", process.env.PORT || 23210));
 const host = readArg(args, "host", process.env.HOST || "127.0.0.1");
+const upstreamProxy = resolveUpstreamProxy();
 
 createProxyServer().listen(port, host, () => {
     console.log(`${pkg.name} v${pkg.version} listening on http://${host}:${port}`);
+    if (upstreamProxy) console.log(`Upstream requests go through ${upstreamProxy.url}`);
     console.log(`Fill this address into Infinite Canvas → 配置 → 本地代理: http://${host}:${port}`);
 });
